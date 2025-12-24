@@ -1,93 +1,135 @@
 import express from 'express';
-import bcrypt from 'bcryptjs';
 import Owner from '../models/Owner.js';
-import hashPassword from '../utils/passwordHashing.js';
-import generateToken from '../utils/generateToken.js';
-import auth from '../middleware/auth.js';
 import Hotel from '../models/Hotel.js';
+import auth from '../middleware/auth.js';
 
 const router = express.Router();
 
-router.post('/register', async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-    if (!name || !email || !password)
-      return res.status(400).json({ error: 'All fields required' });
-
-    const existingOwner = await Owner.findOne({ email });
-    if (existingOwner) return res.status(400).json({ error: 'Email already exists' });
-
-    const hashedPassword = await hashPassword(password);
-
-    const owner = await Owner.create({
-      name,
-      email,
-      password: hashedPassword,
-      role: 'owner'
-    });
-
-    res.status(201).json({ message: 'Owner registered', owner });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
-router.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'Email & password required' });
-
-    const owner = await Owner.findOne({ email });
-    if (!owner) return res.status(404).json({ error: 'Owner not found' });
-
-    const isMatch = await bcrypt.compare(password, owner.password);
-    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
-
-    const token = generateToken(owner);
-    res.json({
-      message: 'Login successful',
-      token,
-      owner: {
-        id: owner._id,
-        name: owner.name,
-        email: owner.email,
-        role: owner.role
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
-
-// Get all owners
+// Get all owners (owner only)
 router.get('/', auth('owner'), async (req, res) => {
-  const owners = await Owner.find().populate('hotels');
-  res.json(owners);
+  try {
+    const owners = await Owner.find().select('-password').populate('hotels');
+    res.json(owners);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Get owner by ID
+// Get owner by ID (owner only - can view own profile)
 router.get('/:id', auth('owner'), async (req, res) => {
-  const owner = await Owner.findById(req.params.id).populate('hotels');
-  if (!owner) return res.status(404).json({ error: 'Owner not found' });
-  res.json(owner);
+  try {
+    if (req.user.id !== req.params.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const owner = await Owner.findById(req.params.id)
+      .select('-password')
+      .populate('hotels');
+    
+    if (!owner) {
+      return res.status(404).json({ error: 'Owner not found' });
+    }
+    res.json(owner);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Create hotel for owner
 router.post('/:ownerId/hotels', auth('owner'), async (req, res) => {
   try {
-    if (req.user.id !== req.params.ownerId)
+    // Owner can only create hotels for themselves
+    if (req.user.id !== req.params.ownerId) {
       return res.status(403).json({ error: 'Not allowed' });
+    }
 
-    const hotel = await Hotel.create({ ...req.body, owner: req.params.ownerId });
+    const { name, location, pricePerNight } = req.body;
+    if (!name || !location || !pricePerNight) {
+      return res.status(400).json({ error: 'All fields required' });
+    }
 
-    await Owner.findByIdAndUpdate(req.params.ownerId, { $push: { hotels: hotel._id } });
+    const hotel = await Hotel.create({
+      name,
+      location,
+      pricePerNight,
+      owner: req.params.ownerId
+    });
 
-    res.status(201).json(hotel);
+    // Add hotel to owner's hotels array
+    await Owner.findByIdAndUpdate(
+      req.params.ownerId,
+      { $push: { hotels: hotel._id } }
+    );
+
+    const populatedHotel = await Hotel.findById(hotel._id)
+      .populate('owner', 'name email');
+    
+    res.status(201).json(populatedHotel);
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Get owner's hotels
+router.get('/:ownerId/hotels', auth('owner'), async (req, res) => {
+  try {
+    // Owner can only view their own hotels
+    if (req.user.id !== req.params.ownerId) {
+      return res.status(403).json({ error: 'Not allowed' });
+    }
+
+    const hotels = await Hotel.find({ owner: req.params.ownerId });
+    res.json(hotels);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update owner profile
+router.put('/:id', auth('owner'), async (req, res) => {
+  try {
+    // Owner can only update their own profile
+    if (req.user.id !== req.params.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Don't allow updating password or role through this route
+    const { password, role, ...updateData } = req.body;
+
+    const updatedOwner = await Owner.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!updatedOwner) {
+      return res.status(404).json({ error: 'Owner not found' });
+    }
+    res.json(updatedOwner);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete owner account
+router.delete('/:id', auth('owner'), async (req, res) => {
+  try {
+    // Owner can only delete their own account
+    if (req.user.id !== req.params.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const owner = await Owner.findByIdAndDelete(req.params.id);
+    if (!owner) {
+      return res.status(404).json({ error: 'Owner not found' });
+    }
+
+    // Delete all hotels owned by this owner
+    await Hotel.deleteMany({ owner: req.params.id });
+
+    res.json({ message: 'Owner deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
