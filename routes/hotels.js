@@ -87,9 +87,7 @@ import auth from '../middleware/auth.js';
 
 const router = express.Router();
 
-/* ======================
-   GET ALL HOTELS (Public)
-====================== */
+
 router.get('/', async (req, res) => {
   try {
     const hotels = await Hotel.find().populate('owner', 'name email');
@@ -99,9 +97,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-/* ======================
-   GET HOTEL BY ID (Public)
-====================== */
+
 router.get('/:id', async (req, res) => {
   try {
     const hotel = await Hotel.findById(req.params.id).populate('owner', 'name email');
@@ -112,9 +108,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-/* ======================
-   CREATE HOTEL (Owner Only)
-====================== */
+
 router.post('/', auth('owner'), async (req, res) => {
   try {
     const hotel = await Hotel.create({ ...req.body, owner: req.user.id });

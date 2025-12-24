@@ -33,9 +33,7 @@ import auth from '../middleware/auth.js';
 
 const router = express.Router();
 
-/* ======================
-   CREATE BOOKING (User Only)
-====================== */
+
 router.post('/', auth('user'), async (req, res) => {
   try {
     const booking = await Booking.create({
@@ -48,11 +46,7 @@ router.post('/', auth('user'), async (req, res) => {
   }
 });
 
-/* ======================
-   GET ALL BOOKINGS
-   - Users: Only their bookings
-   - Admins (optional): All bookings
-====================== */
+
 router.get('/', auth(), async (req, res) => {
   try {
     let bookings;
@@ -68,9 +62,7 @@ router.get('/', auth(), async (req, res) => {
   }
 });
 
-/* ======================
-   GET BOOKING BY ID (User Only)
-====================== */
+
 router.get('/:id', auth('user'), async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id)
